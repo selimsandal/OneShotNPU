@@ -1,0 +1,9 @@
+CARAVEL_ROOT: /Users/selimsandal/Developer/OneShotNPU/caravel
+MCW_ROOT: /Users/selimsandal/Developer/OneShotNPU/mgmt_core_wrapper
+PDK: sky130A
+PDK_ROOT: /Users/selimsandal/Developer/OneShotNPU/dependencies/pdks
+USER_PROJECT_ROOT: /Users/selimsandal/Developer/OneShotNPU
+caravan: false
+clk: 25
+emailto:
+- null

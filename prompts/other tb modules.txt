@@ -1,0 +1,688 @@
+module processing_element #(
+    parameter WIDTH = 16
+) (
+    input [3:0] opcode,
+    input [WIDTH-1:0] a_in,
+    input [WIDTH-1:0] b_in,
+    output logic [WIDTH-1:0] result
+);
+
+    // Outputs for each operation
+    logic [WIDTH-1:0] add_result;
+    logic [WIDTH-1:0] sub_result;
+    logic [WIDTH-1:0] mul_result;
+    logic [WIDTH-1:0] div_result;
+    
+    // Instantiate bfloat modules
+    bfloat16_addsub #(WIDTH) addsub_instance(.a(a_in), .b(b_in), .result(add_result), .is_sub(1'b0)); // add
+    bfloat16_addsub #(WIDTH) sub_instance (.a(a_in), .b(b_in), .result(sub_result), .is_sub(1'b1)); // subtract
+    bfloat16_mul #(WIDTH) mul_instance(.a(a_in), .b(b_in), .result(mul_result)); // multiply
+    bfloat16_div #(WIDTH) div_instance(.a(a_in), .b(b_in), .result(div_result)); // divide
+
+    // Select the result based on the opcode
+    always_comb begin
+        case (opcode)
+            4'b0001, 4'b0010: result = add_result;
+            4'b0011, 4'b0100: result = sub_result;
+            4'b0101, 4'b0110: result = mul_result;
+            4'b0111, 4'b1000: result = div_result;
+            default: result = 0; // Handle unknown opcodes
+        endcase
+    end
+
+endmodule
+
+I need a testbench for this SystemVerilog module. Give outputs using $display.
+
+ChatGPT
+Certainly! Here's a simple SystemVerilog testbench for your processing_element module:
+
+systemverilog
+Copy code
+// Testbench for processing_element
+module tb_processing_element;
+
+    // Parameters
+    parameter WIDTH = 16;
+    
+    // Signals for the DUT (Device Under Test)
+    reg [3:0] tb_opcode;
+    reg [WIDTH-1:0] tb_a_in;
+    reg [WIDTH-1:0] tb_b_in;
+    wire [WIDTH-1:0] tb_result;
+
+    // Instantiate the DUT
+    processing_element #(
+        .WIDTH(WIDTH)
+    ) dut (
+        .opcode(tb_opcode),
+        .a_in(tb_a_in),
+        .b_in(tb_b_in),
+        .result(tb_result)
+    );
+
+    // Clock for our testbench
+    initial begin
+        // Some sample test values
+        tb_a_in = 16'h1234;
+        tb_b_in = 16'h5678;
+        
+        tb_opcode = 4'b0001; // add
+        #10 $display("Opcode: %0b A_in: %h B_in: %h Result: %h", tb_opcode, tb_a_in, tb_b_in, tb_result);
+
+        tb_opcode = 4'b0011; // subtract
+        #10 $display("Opcode: %0b A_in: %h B_in: %h Result: %h", tb_opcode, tb_a_in, tb_b_in, tb_result);
+
+        tb_opcode = 4'b0101; // multiply
+        #10 $display("Opcode: %0b A_in: %h B_in: %h Result: %h", tb_opcode, tb_a_in, tb_b_in, tb_result);
+
+        tb_opcode = 4'b0111; // divide
+        #10 $display("Opcode: %0b A_in: %h B_in: %h Result: %h", tb_opcode, tb_a_in, tb_b_in, tb_result);
+
+        $finish; // End simulation
+    end
+
+endmodule
+This testbench instantiates the processing_element and sets some initial test values for a_in and b_in. It then cycles through various opcodes to display the result. Adjust the test inputs and timing as needed.
+
+Make sure that you've also included the required bfloat16_* modules for the testbench to work. If you run this testbench, you should see the result of each operation printed on the console.
+
+module scalar_regs #(
+    parameter WIDTH = 16,
+    parameter NUM_SCALARS = 4
+) (
+    input logic clk,
+    
+    input [1:0] read_addr,
+    output logic [WIDTH-1:0] read_data,
+    input we, //write enable
+    input [3:0] write_addr, // selects register
+    input [WIDTH-1:0] write_data,
+    output logic [WIDTH-1:0] registers_out[NUM_SCALARS]
+);
+    
+    
+    logic [WIDTH-1:0] registers[NUM_SCALARS];
+
+    assign registers_out = registers;
+    
+    always_ff @(posedge clk) begin
+        if (we) begin
+            registers[write_addr] <= write_data;
+        end
+    end
+    
+    assign read_data = registers[read_addr];
+endmodule
+
+For this module too.
+
+ChatGPT
+Certainly! Here is a testbench for your scalar_regs module:
+
+systemverilog
+Copy code
+module tb_scalar_regs;
+
+    // Parameters
+    parameter WIDTH = 16;
+    parameter NUM_SCALARS = 4;
+
+    // Signals
+    reg clk = 0;
+    reg [1:0] tb_read_addr;
+    wire [WIDTH-1:0] tb_read_data;
+    reg tb_we;
+    reg [3:0] tb_write_addr;
+    reg [WIDTH-1:0] tb_write_data;
+    wire [WIDTH-1:0] tb_registers_out[NUM_SCALARS];
+
+    // Instantiate the DUT
+    scalar_regs #(
+        .WIDTH(WIDTH),
+        .NUM_SCALARS(NUM_SCALARS)
+    ) dut (
+        .clk(clk),
+        .read_addr(tb_read_addr),
+        .read_data(tb_read_data),
+        .we(tb_we),
+        .write_addr(tb_write_addr),
+        .write_data(tb_write_data),
+        .registers_out(tb_registers_out)
+    );
+
+    // Clock generation
+    always begin
+        #5 clk = ~clk;
+    end
+
+    // Testbench sequence
+    initial begin
+        tb_we = 0;
+        
+        // Write some values to the registers
+        tb_we = 1;
+        tb_write_addr = 4'b0000;
+        tb_write_data = 16'h1234;
+        #10;
+
+        tb_write_addr = 4'b0001;
+        tb_write_data = 16'h5678;
+        #10;
+
+        tb_write_addr = 4'b0010;
+        tb_write_data = 16'h9ABC;
+        #10;
+
+        tb_write_addr = 4'b0011;
+        tb_write_data = 16'hDEF0;
+        #10;
+
+        tb_we = 0;
+        
+        // Read back the values
+        tb_read_addr = 2'b00;
+        #10 $display("Read Addr: %0b Read Data: %h Register Out: %h", tb_read_addr, tb_read_data, tb_registers_out[tb_read_addr]);
+
+        tb_read_addr = 2'b01;
+        #10 $display("Read Addr: %0b Read Data: %h Register Out: %h", tb_read_addr, tb_read_data, tb_registers_out[tb_read_addr]);
+
+        tb_read_addr = 2'b10;
+        #10 $display("Read Addr: %0b Read Data: %h Register Out: %h", tb_read_addr, tb_read_data, tb_registers_out[tb_read_addr]);
+
+        tb_read_addr = 2'b11;
+        #10 $display("Read Addr: %0b Read Data: %h Register Out: %h", tb_read_addr, tb_read_data, tb_registers_out[tb_read_addr]);
+
+        $finish; // End the simulation
+    end
+
+endmodule
+In this testbench, a clock signal is generated with a period of 10 time units. The initial block performs a sequence of write operations to the scalar registers followed by a series of read operations. The results of the read operations are displayed on the console alongside the respective data output from the registers_out array. Adjust the timing and values as necessary to match your specific needs.
+
+module vector_regs #(
+    parameter WIDTH = 16
+) (
+    input logic clk,
+    
+    input [1:0] read_addr,
+    output logic [255:0] read_data, //partial read
+    input we, //write enable,
+    input [5:0] write_addr, // [5:4] selects register, [3:0] selects element
+    input [WIDTH-1:0] write_data, //partial write
+    input full_we, //full write enable
+    input [255:0] full_write_data,
+    output logic [255:0] registerout_0,
+    output logic [255:0] registerout_1,
+    output logic [255:0] registerout_2,
+    output logic [255:0] registerout_3
+);
+
+    
+    
+    logic [255:0] register_0;
+    logic [255:0] register_1;
+    logic [255:0] register_2;
+    logic [255:0] register_3;
+
+    assign registerout_0 = register_0;
+    assign registerout_1 = register_1;
+    assign registerout_2 = register_2;
+    assign registerout_3 = register_3;
+
+    always_ff @(posedge clk) begin
+        if (we) begin
+            case (write_addr[5:4])
+                2'b00: register_0[write_addr[3:0]*WIDTH +: WIDTH] <= write_data;
+                2'b01: register_1[write_addr[3:0]*WIDTH +: WIDTH] <= write_data;
+                2'b10: register_2[write_addr[3:0]*WIDTH +: WIDTH] <= write_data;
+                2'b11: register_3[write_addr[3:0]*WIDTH +: WIDTH] <= write_data;
+            endcase
+        end
+
+        if (full_we) begin
+            case (write_addr[5:4])
+                2'b00: register_0 <= full_write_data;
+                2'b01: register_1 <= full_write_data;
+                2'b10: register_2 <= full_write_data;
+                2'b11: register_3 <= full_write_data;
+            endcase
+        end
+    end
+
+    always_comb begin
+        case (read_addr)
+            2'b00: read_data = register_0;
+            2'b01: read_data = register_1;
+            2'b10: read_data = register_2;
+            2'b11: read_data = register_3;
+            default: read_data = 256'b0;
+        endcase
+    end
+
+endmodule
+
+For this module too.
+
+ChatGPT
+Absolutely, here is a testbench for your vector_regs module that uses $display to output the results of operations:
+
+systemverilog
+Copy code
+module tb_vector_regs;
+
+    // Parameters
+    parameter WIDTH = 16;
+
+    // Signals
+    reg clk = 0;
+    reg [1:0] tb_read_addr;
+    wire [255:0] tb_read_data;
+    reg tb_we;
+    reg [5:0] tb_write_addr;
+    reg [WIDTH-1:0] tb_write_data;
+    reg tb_full_we;
+    reg [255:0] tb_full_write_data;
+    wire [255:0] tb_registerout_0;
+    wire [255:0] tb_registerout_1;
+    wire [255:0] tb_registerout_2;
+    wire [255:0] tb_registerout_3;
+
+    // Instantiate the DUT
+    vector_regs #(
+        .WIDTH(WIDTH)
+    ) dut (
+        .clk(clk),
+        .read_addr(tb_read_addr),
+        .read_data(tb_read_data),
+        .we(tb_we),
+        .write_addr(tb_write_addr),
+        .write_data(tb_write_data),
+        .full_we(tb_full_we),
+        .full_write_data(tb_full_write_data),
+        .registerout_0(tb_registerout_0),
+        .registerout_1(tb_registerout_1),
+        .registerout_2(tb_registerout_2),
+        .registerout_3(tb_registerout_3)
+    );
+
+    // Clock generation
+    always begin
+        #5 clk = ~clk;
+    end
+
+    // Testbench sequence
+    initial begin
+        tb_we = 0;
+        tb_full_we = 0;
+        
+        // Full write to the registers
+        tb_full_we = 1;
+        tb_write_addr = 6'b000000;
+        tb_full_write_data = 256'h123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0;
+        #10;
+
+        tb_full_we = 0;
+        
+        // Read back the values and display
+        tb_read_addr = 2'b00;
+        #10 $display("Read Addr: %0b Read Data: %h Register Out 0: %h", tb_read_addr, tb_read_data, tb_registerout_0);
+
+        // Partial write to the registers
+        tb_we = 1;
+        tb_write_addr = 6'b000001; // Writing to register 0, element 1
+        tb_write_data = 16'hF00D;
+        #10;
+        
+        tb_we = 0;
+
+        // Read back the values and display
+        tb_read_addr = 2'b00;
+        #10 $display("Read Addr: %0b Read Data: %h Register Out 0: %h", tb_read_addr, tb_read_data, tb_registerout_0);
+
+        $finish; // End the simulation
+    end
+
+endmodule
+In this testbench:
+
+A clock signal is generated with a period of 10 time units.
+The initial block starts with a full write to the register 0, followed by reading back the values and displaying them.
+Then, a partial write operation is performed to change an element in register 0, and again the values are read back and displayed.
+Feel free to adjust the testbench by adding more test cases or changing the values and timing as needed.
+
+module bfloat16_div #(
+    parameter WIDTH = 16
+) (
+    input logic [WIDTH-1:0] a,
+    input logic [WIDTH-1:0] b,
+    output logic [WIDTH-1:0] result
+);
+    
+    // Extracting the sign of the result from the two sign bits.
+    assign result[WIDTH-1] = a[WIDTH-1] ^ b[WIDTH-1];
+    
+    // Finding the magnitude of the difference between two exponents (E) and adding or subtracting bias according to E_b > E_a or E_b < E_a.
+    logic [7:0] E;
+    assign E = a[WIDTH-2 : WIDTH-8] - b[WIDTH-2 : WIDTH-8];
+    
+    // Dividing mantissa of  b (M_b) by mantissa of  a (M_a) considering the hidden bits.
+    logic [15:0] M_res;
+    assign M_res = {1'b0, b[WIDTH-3 : WIDTH-9]} / {1'b0, a[WIDTH-3 : WIDTH-9]};
+    
+    // If there is a leading zero then normalize the result by shifting it left.
+    always_comb begin
+        if (M_res[15] == 1'b0) begin
+            result[WIDTH-2 : WIDTH-9] = E;
+            result[WIDTH-3 : 0] = {1'b0, M_res[14:8]};
+        end else begin
+            result[WIDTH-2 : WIDTH-9] = E - 1'b1;
+            result[WIDTH-3 : 0] = {M_res[14:8], 1'b1};
+        end
+    end
+endmodule
+
+For this module too
+
+ChatGPT
+Certainly! Below is a simple testbench for the bfloat16_div module:
+
+systemverilog
+Copy code
+module tb_bfloat16_div;
+
+    // Parameter
+    parameter WIDTH = 16;
+
+    // Signals
+    logic [WIDTH-1:0] a, b;
+    logic [WIDTH-1:0] result;
+
+    // Instantiate the DUT
+    bfloat16_div #(WIDTH) uut (
+        .a(a),
+        .b(b),
+        .result(result)
+    );
+
+    // Test sequence
+    initial begin
+        // Test cases
+        a = 16'h4040; // 3.0 in bfloat16
+        b = 16'h4080; // 4.0 in bfloat16
+        #10;
+        $display("a = %h, b = %h, result = %h", a, b, result);
+
+        a = 16'h4000; // 2.0 in bfloat16
+        b = 16'h4040; // 3.0 in bfloat16
+        #10;
+        $display("a = %h, b = %h, result = %h", a, b, result);
+
+        // Additional test cases can be added
+
+        // Finish simulation
+        #100 $finish;
+    end
+
+endmodule
+This testbench provides two test cases. You can add more if needed. The results of the division will be displayed in the simulator's console. Given that the bfloat16 format does not provide infinite precision, the results will be approximations.
+
+Please note that the provided bfloat16_div module does not handle edge cases (e.g., division by zero, infinities, NaNs) of the bfloat16 format. Ensure to enhance the module if such handling is necessary for your application.
+
+module bfloat16_mul #(
+    parameter WIDTH = 16
+) (
+    input logic [WIDTH-1:0] a,
+    input logic [WIDTH-1:0] b,
+    output logic [WIDTH-1:0] result
+);
+    
+    // Extracting the sign of the result from the two sign bits.
+    assign result[WIDTH-1] = a[WIDTH-1] ^ b[WIDTH-1];
+    
+    // Adding the exponents (E) and subtracting the bias component.
+    logic [7:0] E;
+    assign E = a[WIDTH-2 : WIDTH-8] + b[WIDTH-2 : WIDTH-8] - 8'd127;
+    
+    // Multiplying mantissa of b (M_b) by mantissa of a (M_a) considering the hidden bits.
+    logic [15:0] M_res;
+    assign M_res = {1'b0, a[WIDTH-3 : WIDTH-9]} * {1'b0, b[WIDTH-3 : WIDTH-9]};
+    
+    // If the MSB of the product is \lq 1\rq then shift the result to the right by 1-bit.
+    always_comb begin
+        if (M_res[15] == 1'b0) begin
+            result[WIDTH-2 : WIDTH-9] = E;
+            result[WIDTH-3 : 0] = M_res[14:7];
+        end else begin
+            result[WIDTH-2 : WIDTH-9] = E + 1'b1;
+            result[WIDTH-3 : 0] = {M_res[14:8], 1'b1};
+        end
+    end
+endmodule
+
+For this module too
+
+ChatGPT
+Certainly! Here's a simple testbench for the bfloat16_mul module:
+
+systemverilog
+Copy code
+module tb_bfloat16_mul;
+
+    // Parameter
+    parameter WIDTH = 16;
+
+    // Signals
+    logic [WIDTH-1:0] a, b;
+    logic [WIDTH-1:0] result;
+
+    // Instantiate the DUT
+    bfloat16_mul #(WIDTH) uut (
+        .a(a),
+        .b(b),
+        .result(result)
+    );
+
+    // Test sequence
+    initial begin
+        // Test cases
+        a = 16'h4040; // 3.0 in bfloat16
+        b = 16'h4080; // 4.0 in bfloat16
+        #10;
+        $display("a = %h, b = %h, result = %h", a, b, result);
+
+        a = 16'h4000; // 2.0 in bfloat16
+        b = 16'h4040; // 3.0 in bfloat16
+        #10;
+        $display("a = %h, b = %h, result = %h", a, b, result);
+
+        // Additional test cases can be added
+
+        // Finish simulation
+        #100 $finish;
+    end
+
+endmodule
+This testbench provides two test cases. Just like the previous example, you can add more if needed. The results of the multiplication will be displayed in the simulator's console. Remember, since the bfloat16 format does not provide infinite precision, the results will be approximations.
+
+Similarly, as mentioned before, ensure to consider edge cases (e.g., infinities, NaNs) of the bfloat16 format if necessary for your application.
+
+module bfloat16_addsub #(
+    parameter WIDTH = 16
+) (
+    input logic [WIDTH-1:0] a,
+    input logic [WIDTH-1:0] b,
+    output logic [WIDTH-1:0] result,
+    input is_sub
+);
+    
+    // Extracting the sign of the result from the two sign bits.
+    assign result[WIDTH-1] = a[WIDTH-1] ^ (is_sub & b[WIDTH-1]);
+    
+    // Subtracting the exponents E_a and E_b and finding the absolute value of the exponent difference (E)
+    logic [7:0] E;
+    assign E = (a[WIDTH-2 : WIDTH-8] > b[WIDTH-2 : WIDTH-8]) ? a[WIDTH-2 : WIDTH-8] - b[WIDTH-2 : WIDTH-8] : b[WIDTH-2 : WIDTH-8] - a[WIDTH-2 : WIDTH-8];
+    
+    // Shifting the mantissa of the lesser number by E bits considering the hidden bits.
+    logic [7:0] M_a, M_b;
+    assign M_a = {1'b1, a[WIDTH-3 : WIDTH-9]};
+    assign M_b = {1'b1, b[WIDTH-3 : WIDTH-9]};
+    
+    logic [7:0] shifted_M_a, shifted_M_b;
+    always_comb begin
+        if (a[WIDTH-2 : WIDTH-8] > b[WIDTH-2 : WIDTH-8]) begin
+            shifted_M_a = M_a >> E;
+            shifted_M_b = M_b << E;
+        end else begin
+            shifted_M_a = M_a << E;
+            shifted_M_b = M_b >> E;
+        end
+    end
+    
+    // Executing addition or subtraction operation between the shifted version of the mantissa and the mantissa of the other number.
+    logic [7:0] M_res;
+    assign M_res = is_sub ? shifted_M_a - shifted_M_b : shifted_M_a + shifted_M_b;
+    
+    // Normalization for addition and subtraction
+    always_comb begin
+        if (is_sub) begin
+            if (M_res[7] == 1'b0) begin
+                result[WIDTH-2 : WIDTH-9] = a[WIDTH-2 : WIDTH-9] + E;
+                result[WIDTH-3 : 0] = M_res[6:0];
+            end else begin
+                result[WIDTH-2 : WIDTH-9] = a[WIDTH-2 : WIDTH-9] + E - 1'b1;
+                result[WIDTH-3 : 0] = {M_res[6:0], 1'b1};
+            end
+        end else begin
+            if (M_res[7] == 1'b0) begin
+                result[WIDTH-2 : WIDTH-9] = a[WIDTH-2 : WIDTH-9];
+                result[WIDTH-3 : 0] = M_res[6:0];
+            end else begin
+                result[WIDTH-2 : WIDTH-9] = a[WIDTH-2 : WIDTH-9] + 1'b1;
+                result[WIDTH-3 : 0] = {M_res[6:0], 1'b1};
+            end
+        end
+    end
+endmodule
+
+For this module too
+
+ChatGPT
+Sure, let's create a testbench for the bfloat16_addsub module:
+
+systemverilog
+Copy code
+module tb_bfloat16_addsub;
+
+    // Parameter
+    parameter WIDTH = 16;
+
+    // Signals
+    logic [WIDTH-1:0] a, b;
+    logic [WIDTH-1:0] result;
+    logic is_sub;
+
+    // Instantiate the DUT
+    bfloat16_addsub #(WIDTH) uut (
+        .a(a),
+        .b(b),
+        .result(result),
+        .is_sub(is_sub)
+    );
+
+    // Test sequence
+    initial begin
+        // Test cases for addition
+        is_sub = 0;
+        a = 16'h4040; // 3.0 in bfloat16
+        b = 16'h4080; // 4.0 in bfloat16
+        #10;
+        $display("Addition: a = %h, b = %h, result = %h", a, b, result);
+
+        a = 16'h4000; // 2.0 in bfloat16
+        b = 16'h4040; // 3.0 in bfloat16
+        #10;
+        $display("Addition: a = %h, b = %h, result = %h", a, b, result);
+
+        // Test cases for subtraction
+        is_sub = 1;
+        a = 16'h4080; // 4.0 in bfloat16
+        b = 16'h4040; // 3.0 in bfloat16
+        #10;
+        $display("Subtraction: a = %h, b = %h, result = %h", a, b, result);
+
+        a = 16'h4040; // 3.0 in bfloat16
+        b = 16'h4000; // 2.0 in bfloat16
+        #10;
+        $display("Subtraction: a = %h, b = %h, result = %h", a, b, result);
+
+        // Additional test cases can be added
+
+        // Finish simulation
+        #100 $finish;
+    end
+
+endmodule
+This testbench tests both addition and subtraction functionalities of the bfloat16_addsub module. As usual, more test cases can be added if required.
+
+module instruction_decoder (
+    input [31:0] inst,
+    output logic [3:0] opcode,
+    output logic [5:0] src1, //only first 2 bits used outside of load/store operations
+    output logic [5:0] src2, //only first 2 bits used outside of load/store operations
+    output logic [1:0] dest,
+    output logic [15:0] immediate
+);
+    
+    assign opcode = inst[31:29];
+    assign src1 = inst[28:24];
+    assign src2 = inst[23:19];
+    assign dest = inst[18:17];
+    assign immediate = inst[15:0];
+endmodule
+
+For this module too
+
+ChatGPT
+Alright, here's a testbench for the instruction_decoder module with print statements:
+
+systemverilog
+Copy code
+module tb_instruction_decoder;
+
+    // Signals
+    logic [31:0] inst;
+    logic [3:0] opcode;
+    logic [5:0] src1, src2;
+    logic [1:0] dest;
+    logic [15:0] immediate;
+
+    // Instantiate the DUT
+    instruction_decoder uut (
+        .inst(inst),
+        .opcode(opcode),
+        .src1(src1),
+        .src2(src2),
+        .dest(dest),
+        .immediate(immediate)
+    );
+
+    // Test sequence
+    initial begin
+        inst = 32'h8000_0000;  // Simple test instruction 
+        #10;
+        $display("Instruction: %h", inst);
+        $display("Decoded: opcode=%h, src1=%h, src2=%h, dest=%h, immediate=%h", opcode, src1, src2, dest, immediate);
+        
+        inst = 32'hA543_21F0;  // Another test instruction
+        #10;
+        $display("Instruction: %h", inst);
+        $display("Decoded: opcode=%h, src1=%h, src2=%h, dest=%h, immediate=%h", opcode, src1, src2, dest, immediate);
+
+        // You can continue adding more test instructions as necessary to test the decoder functionality
+
+        // Finish simulation
+        #100 $finish;
+    end
+
+endmodule
+This testbench feeds the instruction_decoder with a couple of example instructions and displays the decoded values. You can add more instructions to further test the decoder.

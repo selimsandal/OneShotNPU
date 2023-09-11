@@ -1,0 +1,99 @@
+Below is an instruction that describes a task. Write a response that appropriately completes the request.
+
+### Instruction:
+Design an NPU coprocessor for accelerating common vector operations like add, subtract, divide, multiply, etc. This NPU will receive data from a RISC-V cpu via a 32 bit wishbone bus. The wishbone bus has the signals input wb_clk_i, input wb_rst_i, input wbs_stb_i, input wbs_cyc_i, input wbs_we_i, input [3:0] wbs_sel_i, input [31:0] wbs_dat_i, input [31:0] wbs_adr_i, output wbs_ack_o, output [31:0] wbs_dat_o. The NPU will have 16 vector registers that can each store 16 bfloat16 values. The NPU will have 16 scalar registers. RISC-V cpu will read/write 16 bit parts of the vector registers at a time.
+
+Register starting addresses are defined like this in C.
+
+// INST_DATA register, 32-bit
+#define INST_DATA 0x30000000
+
+// Scalar Registers (16-bit)
+#define SCALAR_REG_0    0x30000004
+#define SCALAR_REG_1    0x30000006
+#define SCALAR_REG_2    0x30000008
+#define SCALAR_REG_3    0x3000000A
+#define SCALAR_REG_4    0x3000000C
+#define SCALAR_REG_5    0x3000000E
+#define SCALAR_REG_6    0x30000010
+#define SCALAR_REG_7    0x30000012
+#define SCALAR_REG_8    0x30000014
+#define SCALAR_REG_9    0x30000016
+#define SCALAR_REG_10   0x30000018
+#define SCALAR_REG_11   0x3000001A
+#define SCALAR_REG_12   0x3000001C
+#define SCALAR_REG_13   0x3000001E
+#define SCALAR_REG_14   0x30000020
+#define SCALAR_REG_15   0x30000022
+
+// Vector Registers (16 * 16-bit)
+#define VECTOR_REG_0    0x30000024
+#define VECTOR_REG_1    0x30000044
+#define VECTOR_REG_2    0x30000064
+#define VECTOR_REG_3    0x30000084
+#define VECTOR_REG_4    0x300000A4
+#define VECTOR_REG_5    0x300000C4
+#define VECTOR_REG_6    0x300000E4
+#define VECTOR_REG_7    0x30000104
+#define VECTOR_REG_8    0x30000124
+#define VECTOR_REG_9    0x30000144
+#define VECTOR_REG_10   0x30000164
+#define VECTOR_REG_11   0x30000184
+#define VECTOR_REG_12   0x300001A4
+#define VECTOR_REG_13   0x300001C4
+#define VECTOR_REG_14   0x300001E4
+#define VECTOR_REG_15   0x30000204
+
+When the wbs_adr_i is set to register locations CPU should be able to read that register from wbs_dat_o, or write to it using wbs_dat_i. This NPU uses bfloat16 as the only data type, bfloat16 has 1 bit sign bit, 8 bits exponent and 7 bits fraction, so 16 bits total. The NPU will use processing elements as executions units, there will be 16 PEs. Implement all necessary modules completely in SystemVerilog for this NPU.
+
+### Response:
+Here are all necessary SystemVerilog modules and their full implementations:
+
+1. bfloat16_addsub
+
+Ports: a, b, result, is_sub
+Extract the sign of the result from the two sign bits.
+Subtract the two exponents  E_a and  E_b . Find the absolute value of the exponent difference ( E ) and choose the exponent of the greater number.
+Shift the mantissa of the lesser number by  E bits Considering the hidden bits.
+Execute addition or subtraction operation between the shifted version of the mantissa and the mantissa of the other number. Consider the hidden bits also.
+Normalization for addition: In case of addition, if there is an carry generated then the result right shifted by 1-bit. This shift operation is reflected on exponent computation by an increment operation.
+Normalization for subtraction: A normalization step is performed if there are leading zeros in case of subtraction operation. Depending on the leading zero count the obtained result is left shifted. Accordingly the exponent value is also decremented by the number of bits equal to the number of leading zeros.
+
+2. bfloat16_mul
+
+Extract the sign of the result from the two sign bits.
+Add the two exponents ( E ). Subtract the bias component from the summation.
+Multiply mantissa of  b ( M_b ) by mantissa of a ( M_a ) considering the hidden bits.
+If the MSB of the product is  \lq 1\rq \hspace{1pt} then shift the result to the right by 1-bit.
+Due to this, the exponent is to be incremented according to the one bit right shift.
+
+3. bfloat16_div
+
+Extract the sign of the result from the two sign bits.
+Find the magnitude of the difference between two exponents ( E ). Add  E to the bias if E_b>E_a or subtract  E from the bias if  E_b<E_a.
+Divide mantissa of  b ( M_b ) by mantissa of  a ( M_a) considering the hidden bits.
+If there is a leading zero then normalize the result by shifting it left.
+Due to the normalization, the exponent is to be decremented according to the number of left shifts.
+
+4. vector_regfile
+
+Vector register file, 16 registers that each store 16 bfloat16 values. This module will be controlled from control module. 2 read ports, 1 write port.
+
+5. scalar_regfile
+
+Scalar register file, 16 registers that each store 1 bfloat16 value. 2 read ports, 1 write port.
+
+6. pe
+
+Processing element of the npu. Instantiates bfloat16 addsub, mul, div modules to create a pe.
+
+7. instruction_dec
+
+Decodes instructions.
+
+8. control
+
+Control module of the NPU. Connects all modules, handles the defined memory addresses for instruction reads, register inputs and outputs.
+9. npu
+
+The NPU top module.

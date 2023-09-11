@@ -1,0 +1,6 @@
+ctransformers:
+  model: models/wizardcoder-python-34b-v1.0.Q5_K_M.gguf
+  model_type: llama
+  config:
+    gpu_layers: 36
+    max_new_tokens: 16384

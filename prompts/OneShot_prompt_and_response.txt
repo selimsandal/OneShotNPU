@@ -1,0 +1,587 @@
+Below is an instruction that describes a task. Write a response that appropriately completes the request.
+
+### Instruction:
+Implement these modules for an NPU coprocessor. This NPU uses bfloat16 as the native data type. This NPU receives commands and data via a wishbone bus from the RISC-V cpu. This NPU accelerates vector-vector and vector-scalar addition, subtraction, multiplication, division.
+
+bfloat16 has the following format:
+
+Sign bit: 1 bit
+Exponent width: 8 bits
+Significand precision: 8 bits (7 explicitly stored, with an implicit leading bit), as opposed to 24 bits in a classical single-precision floating-point format
+
+1. bfloat16_addsub
+ports:
+    input logic [15:0] a,
+    input logic [15:0] b,
+    output logic [15:0] result,
+    input is_sub
+
+explanation:
+Extract the sign of the result from the two sign bits.
+Subtract the two exponents  E_a and  E_b . Find the absolute value of the exponent difference ( E ) and choose the exponent of the greater number.
+Shift the mantissa of the lesser number by  E bits Considering the hidden bits.
+Execute addition or subtraction operation between the shifted version of the mantissa and the mantissa of the other number. Consider the hidden bits also.
+Normalization for addition: In case of addition, if there is an carry generated then the result right shifted by 1-bit. This shift operation is reflected on exponent computation by an increment operation.
+Normalization for subtraction: A normalization step is performed if there are leading zeros in case of subtraction operation. Depending on the leading zero count the obtained result is left shifted. Accordingly the exponent value is also decremented by the number of bits equal to the number of leading zeros.
+
+2. bfloat16_mul
+
+ports:
+    input logic [15:0] a,
+    input logic [15:0] b,
+    output logic [15:0] result
+
+explanation:
+Extract the sign of the result from the two sign bits.
+Add the two exponents ( E ). Subtract the bias component from the summation.
+Multiply mantissa of  b ( M_b ) by mantissa of a ( M_a ) considering the hidden bits.
+If the MSB of the product is  \lq 1\rq \hspace{1pt} then shift the result to the right by 1-bit.
+Due to this, the exponent is to be incremented according to the one bit right shift.
+
+3. bfloat16_div
+
+ports:
+    input logic [WIDTH-1:0] a,
+    input logic [WIDTH-1:0] b,
+    output logic [WIDTH-1:0] result
+
+explanation:
+Extract the sign of the result from the two sign bits.
+Find the magnitude of the difference between two exponents ( E ). Add  E to the bias if E_b>E_a or subtract  E from the bias if  E_b<E_a.
+Divide mantissa of  b ( M_b ) by mantissa of  a ( M_a) considering the hidden bits.
+If there is a leading zero then normalize the result by shifting it left.
+Due to the normalization, the exponent is to be decremented according to the number of left shifts.
+
+4. vector_regs
+
+ports:
+    input logic clk,
+    input rst,
+
+    input [1:0] read_addr,
+    output logic [15:0] read_data, //partial read
+
+    input we, //write enable,
+    input [5:0] write_addr, //2 bits register select, 4 bits element select
+    input [15:0] write_data, //partial write
+
+    input full_we, //full write enable
+    input [255:0] full_write_data
+    
+
+explanation: 4 vector registers that each store 16 bfloat16 values, partial writes target 16 bit elements, full writes target a full register, full writes ignore last 4 bits of write_addr.
+
+5. scalar_regs
+
+ports:
+    input logic clk,
+    input rst,
+
+    input [1:0] read_addr_a,
+    input [1:0] read_addr_b,
+    output logic [15:0] read_data,
+
+    input we, //write enable
+    input [1:0] write_addr,
+    input [15:0] write_data
+
+
+explanation: 4 scalar registers that each store 1 bfloat16 value, reads and writes are 16 bits wide.
+
+6. processing_element
+
+ports:
+    input logic clk,
+    input rst,
+    input [3:0] opcode,
+    input [15:0] a_in,
+    input [15:0] b_in,
+    output logic [15:0] result
+
+explanation: instantiates bfloat16 operation modules and outputs the correct result according to opcode.
+
+processing element opcodes:
+0001: add
+0010: subtract
+0011: multiply
+0100: divide
+
+7. instruction_decoder:
+
+ports:
+    input [31:0] inst,
+    output logic [3:0] opcode,
+    output logic [1:0] src1,
+    output logic [1:0] src2,
+    output logic [1:0] dest
+
+explanation: decodes the instruction for control module
+
+8. control_module
+
+opcodes:
+
+execution operations:
+0001: vector-vector add
+0010: vector-scalar add
+0011: vector-vector subtract
+0100: vector-scalar subtract
+0101: vector-vector multiply
+0110: vector-scalar multiply
+0111: vector-vector divide
+1000: vector-scalar divide
+
+data operations:
+1001: load vector element
+1010: read vector element
+1011: load scalar register
+1100: read scalar register
+
+ports:
+    input wb_clk_i,
+    input wb_rst_i,
+    input wbs_stb_i,
+    input wbs_cyc_i,
+    input wbs_we_i,
+    input [3:0] wbs_sel_i,
+    input [31:0] wbs_dat_i,
+    input [31:0] wbs_adr_i,
+    output wbs_ack_o,
+    output [31:0] wbs_dat_o
+
+explanation: instantiates instruction_decoder, scalar_regs, vector_regs, 16 processing_elements.
+
+For execution operations first 2 bits of the addresses will be used, an instruction will be received from wbs_dat_i, this instruction will be decoded by instruction_decedor. For vector-vector operations starting from processing_element 1, 16 bit elements of the registers will be sent to processing_elements, after execution the result will be concatenated and written back to the destination vector register using the full write port. For vector scalar operations, required registers will be fetched from scalar and vector registers, 16 bit elements of the registers will be sent to a_in ports of the processing elements, all b_in ports will be set to the value from the scalar register, after execution the result will be concatenated and written back to the destination vector register.
+
+For read and write operation of vector registers all 6 bits of the address will be sent to write_addr.
+For read opcodes, the register value will be sent to wbs_dat_o.
+For load opcodes, the immediate value will be loaded into the specified register. Vector load operations will use partial write port.
+
+### Response:Here's the implementation of the modules for an NPU coprocessor that uses bfloat16 as the native data type and accelerates vector-vector and vector-scalar addition, subtraction, multiplication, division. The NPU receives commands and data via a wishbone bus from the RISC-V cpu.
+
+
+1. bfloat16_addsub:
+```verilog
+module bfloat16_addsub #(
+    parameter WIDTH = 16
+) (
+    input logic [WIDTH-1:0] a,
+    input logic [WIDTH-1:0] b,
+    output logic [WIDTH-1:0] result,
+    input is_sub
+);
+    
+    // Extracting the sign of the result from the two sign bits.
+    assign result[WIDTH-1] = a[WIDTH-1] ^ (is_sub & b[WIDTH-1]);
+    
+    // Subtracting the exponents E_a and E_b and finding the absolute value of the exponent difference (E)
+    logic [7:0] E;
+    assign E = (a[WIDTH-2 : WIDTH-8] > b[WIDTH-2 : WIDTH-8]) ? a[WIDTH-2 : WIDTH-8] - b[WIDTH-2 : WIDTH-8] : b[WIDTH-2 : WIDTH-8] - a[WIDTH-2 : WIDTH-8];
+    
+    // Shifting the mantissa of the lesser number by E bits considering the hidden bits.
+    logic [7:0] M_a, M_b;
+    assign M_a = {1'b1, a[WIDTH-3 : WIDTH-9]};
+    assign M_b = {1'b1, b[WIDTH-3 : WIDTH-9]};
+    
+    logic [7:0] shifted_M_a, shifted_M_b;
+    always_comb begin
+        if (a[WIDTH-2 : WIDTH-8] > b[WIDTH-2 : WIDTH-8]) begin
+            shifted_M_a = M_a >> E;
+            shifted_M_b = M_b << E;
+        end else begin
+            shifted_M_a = M_a << E;
+            shifted_M_b = M_b >> E;
+        end
+    end
+    
+    // Executing addition or subtraction operation between the shifted version of the mantissa and the mantissa of the other number.
+    logic [7:0] M_res;
+    assign M_res = is_sub ? shifted_M_a - shifted_M_b : shifted_M_a + shifted_M_b;
+    
+    // Normalization for addition and subtraction
+    always_comb begin
+        if (is_sub) begin
+            if (M_res[7] == 1'b0) begin
+                result[WIDTH-2 : WIDTH-9] = a[WIDTH-2 : WIDTH-9] + E;
+                result[WIDTH-3 : 0] = M_res[6:0];
+            end else begin
+                result[WIDTH-2 : WIDTH-9] = a[WIDTH-2 : WIDTH-9] + E - 1'b1;
+                result[WIDTH-3 : 0] = {M_res[6:0], 1'b1};
+            end
+        end else begin
+            if (M_res[7] == 1'b0) begin
+                result[WIDTH-2 : WIDTH-9] = a[WIDTH-2 : WIDTH-9];
+                result[WIDTH-3 : 0] = M_res[6:0];
+            end else begin
+                result[WIDTH-2 : WIDTH-9] = a[WIDTH-2 : WIDTH-9] + 1'b1;
+                result[WIDTH-3 : 0] = {M_res[6:0], 1'b1};
+            end
+        end
+    end
+endmodule
+```
+
+2. bfloat16_mul:
+```verilog
+module bfloat16_mul #(
+    parameter WIDTH = 16
+) (
+    input logic [WIDTH-1:0] a,
+    input logic [WIDTH-1:0] b,
+    output logic [WIDTH-1:0] result
+);
+    
+    // Extracting the sign of the result from the two sign bits.
+    assign result[WIDTH-1] = a[WIDTH-1] ^ b[WIDTH-1];
+    
+    // Adding the exponents (E) and subtracting the bias component.
+    logic [7:0] E;
+    assign E = a[WIDTH-2 : WIDTH-8] + b[WIDTH-2 : WIDTH-8] - 8'd127;
+    
+    // Multiplying mantissa of b (M_b) by mantissa of a (M_a) considering the hidden bits.
+    logic [15:0] M_res;
+    assign M_res = {1'b0, a[WIDTH-3 : WIDTH-9]} * {1'b0, b[WIDTH-3 : WIDTH-9]};
+    
+    // If the MSB of the product is \lq 1\rq then shift the result to the right by 1-bit.
+    always_comb begin
+        if (M_res[15] == 1'b0) begin
+            result[WIDTH-2 : WIDTH-9] = E;
+            result[WIDTH-3 : 0] = M_res[14:7];
+        end else begin
+            result[WIDTH-2 : WIDTH-9] = E + 1'b1;
+            result[WIDTH-3 : 0] = {M_res[14:8], 1'b1};
+        end
+    end
+endmodule
+```
+
+3. bfloat16_div:
+```verilog
+module bfloat16_div #(
+    parameter WIDTH = 16
+) (
+    input logic [WIDTH-1:0] a,
+    input logic [WIDTH-1:0] b,
+    output logic [WIDTH-1:0] result
+);
+    
+    // Extracting the sign of the result from the two sign bits.
+    assign result[WIDTH-1] = a[WIDTH-1] ^ b[WIDTH-1];
+    
+    // Finding the magnitude of the difference between two exponents (E) and adding or subtracting bias according to E_b > E_a or E_b < E_a.
+    logic [7:0] E;
+    assign E = a[WIDTH-2 : WIDTH-8] - b[WIDTH-2 : WIDTH-8];
+    
+    // Dividing mantissa of  b (M_b) by mantissa of  a (M_a) considering the hidden bits.
+    logic [15:0] M_res;
+    assign M_res = {1'b0, b[WIDTH-3 : WIDTH-9]} / {1'b0, a[WIDTH-3 : WIDTH-9]};
+    
+    // If there is a leading zero then normalize the result by shifting it left.
+    always_comb begin
+        if (M_res[15] == 1'b0) begin
+            result[WIDTH-2 : WIDTH-9] = E;
+            result[WIDTH-3 : 0] = {1'b0, M_res[14:8]};
+        end else begin
+            result[WIDTH-2 : WIDTH-9] = E - 1'b1;
+            result[WIDTH-3 : 0] = {M_res[14:8], 1'b1};
+        end
+    end
+endmodule
+```
+
+4. vector_regs:
+```verilog
+module vector_regs #(
+    parameter WIDTH = 16,
+    parameter NUM_VECTORS = 4,
+    parameter VECTOR_SIZE = 16
+) (
+    input logic clk,
+    input rst,
+    
+    input [1:0] read_addr,
+    output logic [WIDTH*VECTOR_SIZE-1:0] read_data, //partial read
+    input we, //write enable,
+    input [5:0] write_addr, // [5:4] selects register, [3:0] selects element
+    input [WIDTH-1:0] write_data, //partial write
+    input full_we, //full write enable
+    input [255:0] full_write_data
+);
+    
+    logic [WIDTH*VECTOR_SIZE-1:0] registers[NUM_VECTORS];
+    
+    always_ff @(posedge clk) begin
+        if (we) begin
+            registers[write_addr[5:4]][write_addr[3:0]*WIDTH +: WIDTH] <= write_data;
+        end
+        
+        if (full_we) begin
+            case (write_addr[5:4])
+                2'b00: registers[0] <= full_write_data[WIDTH*VECTOR_SIZE-1 : 0];
+                2'b01: registers[1] <= full_write_data[WIDTH*VECTOR_SIZE-1 : WIDTH*VECTOR_SIZE/2];
+                2'b10: registers[2] <= full_write_data[WIDTH*VECTOR_SIZE/2-1 : WIDTH*VECTOR_SIZE/4];
+                2'b11: registers[3] <= full_write_data[WIDTH*VECTOR_SIZE/4-1 : WIDTH*VECTOR_SIZE/2];
+            endcase
+        end
+    end
+    
+    assign read_data = registers[read_addr];
+endmodule
+```
+
+5. scalar_regs:
+```verilog
+module scalar_regs #(
+    parameter WIDTH = 16,
+    parameter NUM_SCALARS = 4
+) (
+    input logic clk,
+    input rst,
+    
+    input [1:0] read_addr,
+    output logic [WIDTH-1:0] read_data,
+    input we, //write enable
+    input [3:0] write_addr, // selects register
+    input [WIDTH-1:0] write_data
+);
+    
+    logic [WIDTH-1:0] registers[NUM_SCALARS];
+    
+    always_ff @(posedge clk) begin
+        if (we) begin
+            registers[write_addr] <= write_data;
+        end
+    end
+    
+    assign read_data = registers[read_addr];
+endmodule
+```
+
+6. processing_element:
+```verilog
+module processing_element #(
+    parameter WIDTH = 16
+) (
+    input clk,
+    input rst,
+    input [3:0] opcode,
+    input [WIDTH-1:0] a_in,
+    input [WIDTH-1:0] b_in,
+    output logic [WIDTH-1:0] result
+);
+    
+    always_comb begin
+        case (opcode)
+            3'b001: bfloat16_addsub #(WIDTH) addsub(.a(a_in), .b(b_in), .result(result), .is_sub(1'b0); // add
+            3'b010: bfloat16_addsub #(WIDTH) sub (.a(a_in), .b(b_in), .result(result), .is_sub(1'b1); // subtract
+            3'b011: bfloat16_mul #(WIDTH) mul(.a(a_in), .b(b_in), .result(result); // multiply
+            3'b100: bfloat16_div #(WIDTH) div (.a(a_in), .b(b_in), .result(result); // divide
+        endcase
+    end
+endmodule
+```
+
+7. instruction_decoder:
+```verilog
+module instruction_decoder (
+    input [31:0] inst,
+    output logic [3:0] opcode,
+    output logic [5:0] src1, //only first 2 bits used for execution operations
+    output logic [5:0] src2, //only first 2 bits used for execution operations
+    output logic [1:0] dest,
+    output logic [15:0] immediate
+);
+    
+    assign opcode = inst[31:29];
+    assign src1 = inst[28:24];
+    assign src2 = inst[23:19];
+    assign dest = inst[18:17];
+    assign immediate = inst[15:0];
+endmodule
+```
+
+8. control_module:
+```verilog
+module control_module #(
+    parameter WIDTH = 16,
+    parameter NUM_VECTORS = 4,
+    parameter VECTOR_SIZE = 16,
+    parameter NUM_SCALARS = 4
+) (
+    input wb_clk_i,
+    input wb_rst_i,
+    input wbs_stb_i,
+    input wbs_cyc_i,
+    input wbs_we_i,
+    input [31:0] wbs_dat_i,
+    output wbs_ack_o,
+    output [31:0] wbs_dat_o
+);
+
+    logic [3:0] opcode;
+    logic [5:0] src1, src2, dest;
+    logic [15:0] immediate;
+    logic [255:0] vector_read_data;
+    logic [15:0] scalar_read_data;
+
+    instruction_decoder decoder(.inst(wbs_dat_i), .opcode(opcode), .src1(src1), .src2(src2), .dest(dest), .immediate(immediate));
+
+    logic [1:0] vec_read_addr;
+    logic [15:0] vec_read_data;
+    logic vec_we;
+    logic [5:0] vec_write_addr;
+    logic [15:0] vec_write_data;
+    logic vec_full_we;
+    logic [255:0] vec_full_write_data;
+
+    vector_regs #(WIDTH, NUM_VECTORS, VECTOR_SIZE) vectors(.clk(wb_clk_i), .rst(wb_rst_i), 
+                                                .read_addr(vec_read_addr), .read_data(vector_read_data), .we(vec_we), 
+                                                .write_addr(vec_write_addr), .write_data(vec_write_data), .full_we(vec_full_we), .full_write_data(vec_full_write_data));
+    
+    logic [1:0] scalar_read_addr;
+    logic [WIDTH-1:0] scalar_write_data;
+    logic scalar_we;
+    scalar_regs #(WIDTH, NUM_SCALARS) scalars(.clk(wb_clk_i), .rst(wb_rst_i), 
+                                      .read_addr(scalar_read_addr), .read_data(scalar_read_data), .we(scalar_we), .write_addr(src2), .write_data(scalar_write_data));
+    
+    // Processing elements
+    logic [WIDTH-1:0] a_in[VECTOR_SIZE];
+    logic [WIDTH-1:0] b_in[VECTOR_SIZE];
+    logic [WIDTH-1:0] result[VECTOR_SIZE];
+
+    genvar i;
+    generate
+        for (i = 0; i < VECTOR_SIZE; i++) begin : pe_gen
+            processing_element #(WIDTH) pe(.clk(wb_clk_i), .rst(wb_rst_i), .opcode(opcode), .a_in(a_in[i]), .b_in(b_in[i]), .result(result[i]));
+        end
+    endgenerate
+
+    // Concat results and write back to vector register
+    logic [WIDTH*VECTOR_SIZE-1:0] result_concat;
+    always_comb begin
+        for (int i = 0; i < VECTOR_SIZE; i++) begin
+            result_concat[i*WIDTH +: WIDTH] = result[i];
+        end
+    end
+
+    always_ff @(posedge wb_clk_i) begin
+        if (wbs_stb_i && wbs_cyc_i) begin
+            case (opcode)
+                4'b0001: //vector-vector add
+                for (int i = 0; i < VECTOR_SIZE; i++) begin
+                    a_in[i] <= vectors.registers[src1][i*WIDTH +: WIDTH];
+                    b_in[i] <= vectors.registers[src2][i*WIDTH +: WIDTH];
+                end
+                vec_write_addr = dest;
+                vec_we = 1'b0;
+                vec_full_we = 1'b1;
+                vec_full_write_data = result_concat;
+                
+                4'b010: //vector-scalar add
+                for (int i = 0; i < VECTOR_SIZE; i++) begin
+                    a_in[i] <= vectors.registers[src1][i*WIDTH +: WIDTH];
+                    b_in[i] <= scalar_read_data;
+                end
+                vec_write_addr = dest;
+                vec_we = 1'b0;
+                vec_full_we = 1'b1;
+                vec_full_write_data = result_concat;
+                
+                4'b011: //vector-vector subtract
+                for (int i = 0; i < VECTOR_SIZE; i++) begin
+                    a_in[i] <= vectors.registers[src1][i*WIDTH +: WIDTH];
+                    b_in[i] <= vectors.registers[src2][i*WIDTH +: WIDTH];
+                end
+                vec_write_addr = dest;
+                vec_we = 1'b0;
+                vec_full_we = 1'b1;
+                vec_full_write_data = result_concat;
+                
+                4'b100: //vector-scalar subtract
+                for (int i = 0; i < VECTOR_SIZE; i++) begin
+                    a_in[i] <= vectors.registers[src1][i*WIDTH +: WIDTH];
+                    b_in[i] <= scalar_read_data;
+                end
+                vec_write_addr = dest;
+                vec_we = 1'b0;
+                vec_full_we = 1'b1;
+                vec_full_write_data = result_concat;
+                
+                4'b011: //vector-vector multiply
+                for (int i = 0; i < VECTOR_SIZE; i++) begin
+                    a_in[i] <= vectors.registers[src1][i*WIDTH +: WIDTH];
+                    b_in[i] <= vectors.registers[src2][i*WIDTH +: WIDTH];
+                end
+                vec_write_addr = dest;
+                vec_we = 1'b0;
+                vec_full_we = 1'b1;
+                vec_full_write_data = result_concat;
+                
+                4'b101: //vector-scalar multiply
+                for (int i = 0; i < VECTOR_SIZE; i++) begin
+                    a_in[i] <= vectors.registers[src1][i*WIDTH +: WIDTH];
+                    b_in[i] <= scalar_read_data;
+                end
+                vec_write_addr = dest;
+                vec_we = 1'b0;
+                vec_full_we = 1'b1;
+                vec_full_write_data = result_concat;
+                
+                4'b101: //vector-vector divide
+                for (int i = 0; i < VECTOR_SIZE; i++) begin
+                    a_in[i] <= vectors.registers[src1][i*WIDTH +: WIDTH];
+                    b_in[i] <= vectors.registers[src2][i*WIDTH +: WIDTH];
+                end
+                vec_write_addr = dest;
+                vec_we = 1'b0;
+                vec_full_we = 1'b1;
+                vec_full_write_data = result_concat;
+                
+                4'b110: //vector-scalar divide
+                for (int i = 0; i < VECTOR_SIZE; i++) begin
+                    a_in[i] <= vectors.registers[src1][i*WIDTH +: WIDTH];
+                    b_in[i] <= scalar_read_data;
+                end
+                vec_write_addr = dest;
+                vec_we = 1'b0;
+                vec_full_we = 1'b1;
+                vec_full_write_data = result_concat;
+                
+                4'b111: //load scalar
+                scalar_read_addr <= src2;
+                scalar_we <= 1'b0;
+                scalar_write_data <= immediate;
+            endcase
+        end else begin
+            vec_we = 1'b0;
+            vec_full_we = 1'b0;
+            scalar_we <= 1'b0;
+        end
+    end
+    
+    // Read data mux
+    always_comb begin
+        case (opcode)
+            4'b001, 4'b010: vec_read_addr = src2;
+            default: vec_read_addr = dest;
+        endcase
+    end
+    
+    // Output data mux
+    always_comb begin
+        case (opcode)
+            4'b001, 4'b010, 4'b011, 4'b100: wbs_dat_o = vector_read_data;
+            default: wbs_dat_o = scalar_read_data;
+        endcase
+    end
+    
+    // Acknowledge signal
+    always_ff @(posedge wb_clk_i) begin
+        if (wbs_stb_i && wbs_cyc_i) begin
+            wbs_ack_o <= 1'b1;
+        end else begin
+            wbs_ack_o <= 1'b0;
+        end
+    end
+endmodule
+```
